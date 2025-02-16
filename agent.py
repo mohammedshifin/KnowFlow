@@ -10,7 +10,7 @@ if not api_key:
     st.error("Google API Key is required")
     st.stop()
 
-llm = ChatGoogleGenerativeAI(model="models/text-bison-001", google_api_key=api_key)
+llm = ChatGoogleGenerativeAI(model="gemini-pro", google_api_key=api_key)
 
 concept_extraction_prompt = PromptTemplate(
     input_variables=["query"],
