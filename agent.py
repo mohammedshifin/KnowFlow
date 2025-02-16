@@ -1,57 +1,74 @@
 import streamlit as st
 from langchain_google_genai.chat_models import ChatGoogleGenerativeAI
 from langchain_core.prompts import PromptTemplate
+from langchain_core.output_parsers import StrOutputParser
 from dotenv import load_dotenv
 import os
+import time
 
+# Load environment variables
 load_dotenv()
 api_key = os.getenv('GOOGLE_API_KEY')
 if not api_key:
     st.error("Google API Key is required")
     st.stop()
 
-llm = ChatGoogleGenerativeAI(model="gemini-pro", google_api_key=api_key)
+# Initialize the chat model with gemini-pro and temperature=0
+llm = ChatGoogleGenerativeAI(model="gemini-pro", google_api_key=api_key, temperature=0)
 
+# Define prompt templates for concept extraction and related concept generation
 concept_extraction_prompt = PromptTemplate(
     input_variables=["query"],
-    template="""Extract the key research concepts from the following query: {query}.
-Return the concepts as a comma-separated list."""
+    template="""Extract key research concepts from: {query}
+Return as a comma-separated list. Do not include explanations."""
 )
 
 related_concept_prompt = PromptTemplate(
     input_variables=["concept"],
-    template="""For the research concept '{concept}', list 5 closely related concepts or ideas as a comma-separated list."""
+    template="""List 5 closely related concepts for '{concept}'.
+Return as a comma-separated list. No explanations."""
 )
 
-concept_extraction_chain = llm | concept_extraction_prompt
-related_concepts_chain = llm | related_concept_prompt
+# Create chains by combining the prompt with the LLM and parsing output as a string
+concept_extraction_chain = concept_extraction_prompt | llm | StrOutputParser()
+related_concepts_chain = related_concept_prompt | llm | StrOutputParser()
 
+# Initialize conversation history in session state if it doesn't exist
 if "history" not in st.session_state:
     st.session_state.history = []
 
 st.title("Interactive Research Concept Mapper")
 
-user_input = st.text_input("Enter your research query:", key="query_input")
-if st.button("Generate Concept Network") and user_input:
-    st.session_state.history.append({"role": "user", "content": user_input})
+user_query = st.text_input("Enter your research query:")
+
+if st.button("Generate Concept Network") and user_query:
+    st.session_state.history.append({"role": "user", "content": user_query})
     
-    formatted_extraction_prompt = concept_extraction_prompt.format(query=user_input)
-    raw_concepts = concept_extraction_chain.invoke(formatted_extraction_prompt)
-    raw_concepts_str = str(raw_concepts)
-    concepts_list = [c.strip() for c in raw_concepts_str.split(",") if c.strip()]
+    try:
+        # Extract key concepts from the query
+        concepts_str = concept_extraction_chain.invoke({"query": user_query})
+        concepts_list = [c.strip() for c in concepts_str.split(",") if c.strip()]
+        st.write("**Extracted Concepts:**", concepts_list)
+        
+        # Build a network by expanding each concept with related ideas
+        concept_network = {}
+        for concept in concepts_list:
+            try:
+                related_str = related_concepts_chain.invoke({"concept": concept})
+                related_list = [r.strip() for r in related_str.split(",") if r.strip()]
+                concept_network[concept] = related_list
+                st.write(f"**Related to {concept}:**", related_list)
+                time.sleep(1)  # Optional: to avoid hitting API rate limits
+            except Exception as e:
+                st.error(f"Error processing {concept}: {str(e)}")
+                continue
 
-    concept_network = {}
-    for concept in concepts_list:
-        formatted_related_prompt = related_concept_prompt.format(concept=concept)
-        raw_related = related_concepts_chain.invoke(formatted_related_prompt)
-        raw_related_str = str(raw_related)
-        related_list = [r.strip() for r in raw_related_str.split(",") if r.strip()]
-        concept_network[concept] = related_list
-
-    st.session_state.history.append({"role": "assistant", "content": concept_network})
-
-    st.write("### Concept Network:")
-    st.json(concept_network)
+        st.session_state.history.append({"role": "assistant", "content": concept_network})
+        
+        st.write("### Concept Network:")
+        st.json(concept_network)
+    except Exception as e:
+        st.error(f"Critical error: {str(e)}")
 
 if st.session_state.history:
     st.write("### Conversation History")
